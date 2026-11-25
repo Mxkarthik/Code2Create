@@ -1,177 +1,73 @@
-# API Specification — Phases 01 & 02
+# API Specification — Phases 01–04
 
-All endpoints return JSON (except OAuth `302` redirects) and include an `X-Request-Id` response header for correlation.
-
-> **Scope Notice**: Health/readiness (Phase 01) and Google OAuth, persistent session inspection, CSRF token issuance, and logout (Phase 02) are implemented. Team, competition, problem, submission, draft, and WebSocket APIs are pending future phases.
+All endpoints return JSON (except OAuth `302` redirects), set `Cache-Control: no-store` on dynamic state/auth endpoints, and include `X-Request-Id`. All state-changing mutations require `X-CSRF-Token` (`GET /api/auth/csrf`) and a trusted `Origin`/`Referer`.
 
 ---
 
-## 1. Infrastructure Endpoints
+## 1. Infrastructure & Auth Endpoints (Phases 01–03)
 
-### `GET /api/health`
+- `GET /api/health` (`200`), `GET /api/ready` (`200` / `503`)
+- `GET /api/auth/google`, `GET /api/auth/google/callback`, `GET /api/auth/me`, `GET /api/auth/session`, `GET /api/auth/csrf`, `POST /api/auth/logout`
 
-Reports process liveness independently of database or session-store availability.
+## 2. Participant Team Endpoints (Phase 03)
 
-- **Authentication**: None
-- **Response (`200 OK`)**:
-
-```json
-{
-  "success": true,
-  "status": "ok",
-  "service": "code2create-backend",
-  "environment": "development",
-  "timestamp": "2026-11-25T10:45:00.000Z",
-  "uptimeSeconds": 12.34,
-  "requestId": "9f2f7b1a-7c3d-4a56-9a3f-1b7c4e9f2d01"
-}
-```
-
-### `GET /api/ready`
-
-Reports whether MongoDB is connected and ready.
-
-- **Authentication**: None
-- **Ready (`200 OK`)** / **Unavailable (`503 Service Unavailable`)**:
-
-```json
-{
-  "success": true,
-  "status": "ready",
-  "checks": {
-    "database": {
-      "status": "up"
-    }
-  },
-  "timestamp": "2026-11-25T10:45:00.000Z",
-  "requestId": "9f2f7b1a-7c3d-4a56-9a3f-1b7c4e9f2d01"
-}
-```
+- `GET /api/teams/me`, `POST /api/teams`, `POST /api/teams/join`, `PATCH /api/teams/me/ready`, `POST /api/teams/me/leave`, `POST /api/teams/me/regenerate-code`, `POST /api/teams/me/transfer-leadership`, `DELETE /api/teams/me/members/:userId`, `DELETE /api/teams/me` *(All team mutations return `409 LOBBY_CLOSED` after roster lock).*
 
 ---
 
-## 2. Authentication & Session Endpoints
+## 3. Participant Competition Endpoints (Phase 04)
 
-### `GET /api/auth/google`
+Requires `requireAuth`, `requireActiveUser`, `requireParticipantAccess` (permits `PARTICIPANT` and `ADMIN`).
 
-Initiates Google OAuth 2.0 Authorization Code Flow with PKCE (`S256`) and a session-bound 10-minute state token.
+### `GET /api/competition/current`
+Returns competition status, `durationSeconds`, `startedAt`, `endsAt`, `remainingSeconds`, `serverTime`, and caller's `membership` (`teamId`, `teamRole`, `isEligible`, `eligibilityReason`, `inFrozenRoster`).
 
-- **Query Parameters**:
-  - `portal` (optional, default `participant`): Allowed values are `participant`, `admin`, or `dev` (`dev` is permitted **only** when `NODE_ENV=development`).
-- **Rate Limit**: `300` requests / `15m` per IP.
-- **Response**: `302 Found` redirect to `https://accounts.google.com/o/oauth2/v2/auth` (or `400 INVALID_PORTAL_DESTINATION`).
-
-### `GET /api/auth/google/callback`
-
-Validates and atomically consumes the one-time OAuth state, exchanges the authorization code, verifies Google identity & `email_verified`, atomically upserts the `User` record, rotates the session ID, persists the session in MongoDB, and redirects to the validated portal destination.
-
-- **Rate Limit**: `300` requests / `15m` per IP.
-- **Success Response**: `302 Found` to `PARTICIPANT_FRONTEND_URL`, `ADMIN_FRONTEND_URL`, or `/api/auth/me` (when `portal=dev` in `development`), setting `HttpOnly`, `SameSite=Lax` cookie `c2c.sid` (`Secure` in `production`).
-- **Failure Responses**:
-  - `302` to trusted frontend `?authError=OAUTH_CONSENT_CANCELLED` (or `401` JSON for `dev` / stateless) on consent cancellation
-  - `400 MISSING_OAUTH_STATE`
-  - `403 INVALID_OAUTH_STATE` / `EXPIRED_OAUTH_STATE` / `REPLAYED_OAUTH_STATE` / `ACCOUNT_DISABLED`
-  - `401 UNVERIFIED_GOOGLE_EMAIL` / `OAUTH_EXCHANGE_FAILED`
-
-### `GET /api/auth/me`
-
-Returns the authenticated user's live profile and portal permissions directly from MongoDB.
-
-- **Authentication**: Required (`requireAuth`, `requireActiveUser`, `requireParticipantAccess`)
-- **Headers**: `Cache-Control: no-store`
-- **Response (`200 OK`)**:
-
-```json
-{
-  "success": true,
-  "user": {
-    "id": "6744...",
-    "name": "Jane Doe",
-    "email": "jane@example.com",
-    "avatar": "https://lh3.googleusercontent.com/...",
-    "role": "PARTICIPANT",
-    "permissions": {
-      "participantPortal": true,
-      "adminPortal": false
-    }
-  },
-  "requestId": "..."
-}
-```
-
-### `GET /api/auth/session`
-
-Reports current authentication status and dual expiration timestamps without exposing the session ID.
-
-- **Authentication**: Passive (`resolveSessionStatus` — returns `200` with `authenticated: false` when unauthenticated or expired, `503` on MongoDB outage).
-- **Headers**: `Cache-Control: no-store`
-- **Authenticated Response (`200 OK`)**:
-
-```json
-{
-  "success": true,
-  "authenticated": true,
-  "absoluteExpiresAt": "2026-11-25T18:45:00.000Z",
-  "idleExpiresAt": "2026-11-25T12:45:00.000Z",
-  "serverTime": "2026-11-25T10:45:00.000Z",
-  "requestId": "..."
-}
-```
-
-### `GET /api/auth/csrf`
-
-Issues a session-bound CSRF token for protected state-changing requests.
-
-- **Authentication**: Required (`requireAuth`, `requireActiveUser`)
-- **Headers**: `Cache-Control: no-store`
-- **Response (`200 OK`)**:
-
-```json
-{
-  "success": true,
-  "csrfToken": "<64-hex-char-token>",
-  "requestId": "..."
-}
-```
-
-### `POST /api/auth/logout`
-
-Destroys the current server-side MongoDB session and clears the `c2c.sid` cookie without affecting any user or future gameplay records.
-
-- **Authentication & Security**: `requireAuth`, `csrfProtection` (`X-CSRF-Token` header + trusted `Origin`/`Referer`), `authMutationLimiter` (`300` / `15m` per user ID)
-- **Headers**: `Cache-Control: no-store`
-- **Response (`200 OK`)**:
-
-```json
-{
-  "success": true,
-  "message": "Logged out successfully",
-  "requestId": "..."
-}
-```
+### `GET /api/competition/state`
+Returns `/api/competition/current` plus `teamRoundState` (`null` before lock or for unassigned/excluded users; own team's `round1Rank`, `headStartDistance`, `earnedDistance`, `totalDistance`, `challengeOpportunitiesUsed`, `sampleRunsUsed`, `finalSubmissionsUsed`, `rejectedFinalSubmissions`, `activeChallengeAttemptId`, `pendingSubmissionId`, `stateVersion` after lock). Never leaks other teams' rankings or states.
 
 ---
 
-## 3. Standard Error Contract
+## 4. Administrative Competition & Lobby Endpoints (Phases 03–04)
 
-```json
-{
-  "success": false,
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable message",
-    "requestId": "..."
-  }
-}
-```
+Requires `requireAuth`, `requireActiveUser`, `requireAdmin` (mutations require `X-CSRF-Token` + trusted `Origin`).
 
-| Status | Codes |
-| :---: | :--- |
-| `400` | `INVALID_JSON`, `INVALID_PORTAL_DESTINATION`, `MISSING_OAUTH_STATE` |
-| `401` | `UNAUTHENTICATED`, `SESSION_EXPIRED`, `SESSION_INVALID`, `UNVERIFIED_GOOGLE_EMAIL`, `OAUTH_CONSENT_CANCELLED`, `OAUTH_EXCHANGE_FAILED` |
-| `403` | `FORBIDDEN`, `ACCOUNT_DISABLED`, `CORS_ORIGIN_DENIED`, `CSRF_TOKEN_MISSING`, `CSRF_TOKEN_INVALID`, `CSRF_UNTRUSTED_ORIGIN`, `INVALID_OAUTH_STATE`, `EXPIRED_OAUTH_STATE`, `REPLAYED_OAUTH_STATE` |
-| `404` | `ROUTE_NOT_FOUND` |
-| `413` | `PAYLOAD_TOO_LARGE` |
-| `429` | `RATE_LIMIT_EXCEEDED` |
-| `500` | `INTERNAL_SERVER_ERROR` (message sanitized in `production`) |
-| `503` | `AUTH_INFRASTRUCTURE_UNAVAILABLE`, `SERVICE_UNAVAILABLE` |
+### `GET /api/admin/lobby` & `GET /api/admin/teams`
+Extended backward-compatibly with `round1Rank`, `round1MappingStatus`, `isExcluded`, `excludedAt`, `exclusionReason`, `isEligible`, `eligibilityIssues`, `proposedHeadStart`, `frozenHeadStartDistance`, `rankImportVersion`, `rankImportConfirmed`, `eligibleTeamCount`, `lockedAt`, `startedAt`, `endsAt`, `remainingSeconds`, `lifecycleVersion`.
+
+### `GET /api/admin/competition`
+Returns complete competition configuration, lifecycle status, versions, rank confirmation status, eligible/excluded counts, timestamps, and `remainingSeconds`.
+
+### `PATCH /api/admin/competition/config` *(CSRF required, `LOBBY` only)*
+- **Body** (allowlisted `.strict()`): `{ "durationSeconds"?: 10..14400, "maxHeadStart"?: 0..100, "qualificationLimit"?: 1..100 }`
+- **Errors**: `400 VALIDATION_ERROR`, `409 CONFIGURATION_LOCKED`
+
+### `POST /api/admin/teams/import-ranks` *(CSRF required, `LOBBY` only — complete replacement)*
+- **Body**: `{ "rankedTeamCount": 50, "entries": [{ "teamId": "<id>", "rank": 1 }] }`
+- **Success**: `200 OK` with `rankImportVersion`, `rosterVersion`, `summary` (`mappedCount`, `unmappedCount`, `excludedCount`), `mapped`, `unmapped`, `excluded`. Invalidates prior confirmation.
+- **Errors**: `400 ROUND1_RANK_INVALID` / `ROUND1_RANK_DUPLICATE`, `404 TEAM_NOT_FOUND`, `409 LOBBY_CLOSED`.
+
+### `POST /api/admin/teams/confirm-ranks` *(CSRF required, `LOBBY` only)*
+- **Body**: `{ "rankImportVersion": 1 }`
+- **Errors**: `409 ROSTER_VERSION_CONFLICT`, `409 ROUND1_RANK_UNCONFIRMED`, `409 ROUND1_MAPPING_STALE`, `409 LOBBY_CLOSED`.
+
+### `POST /api/admin/teams/:teamId/exclude` & `POST /api/admin/teams/:teamId/include` *(CSRF required, `LOBBY` only)*
+- **Exclude Body**: `{ "reason": "Team incomplete or not qualified for Round 2" }` (3–300 chars)
+- **Errors**: `400 VALIDATION_ERROR`, `404 TEAM_NOT_FOUND`, `409 TEAM_STATE_CONFLICT`, `409 LOBBY_CLOSED`.
+
+### `GET /api/admin/competition/roster-preview`
+Returns `status`, `rosterVersion`, `rankImportVersion`, `rankImportConfirmed`, `activeTeamCount`, `readyTeamCount`, `incompleteTeamCount`, `unreadyTeamCount`, `excludedTeamCount`, `unmappedTeamCount`, `eligibleTeamCount`, `proposedHeadStarts`, `blockingIssues`, `canLock`, `serverTime`.
+
+### `POST /api/admin/competition/lock` *(CSRF required, `LOBBY` only)*
+- **Body**: `{ "expectedRosterVersion": 15, "expectedRankImportVersion": 2 }`
+- **Success**: `200 OK` transitions `LOBBY -> LOCKED`, freezes `FrozenRosterEntry` & `TeamRoundState` once per eligible team.
+- **Errors**: `409 ROSTER_VERSION_CONFLICT`, `409 ROUND1_RANK_UNCONFIRMED`, `409 ROSTER_EMPTY`, `409 ROSTER_NOT_READY`, `409 INVALID_COMPETITION_STATE`.
+
+### `POST /api/admin/competition/start` *(CSRF required, `LOCKED` only)*
+- **Success**: `200 OK` transitions `LOCKED -> LIVE` with authoritative `startedAt`, `endsAt`, `durationSeconds`, `remainingSeconds`, `serverTime`, `eligibleTeamCount`, `lifecycleVersion`.
+- **Errors**: `409 INVALID_COMPETITION_STATE`, `409 COMPETITION_ALREADY_STARTED`.
+
+---
+
+## 5. Error Codes (Phase 04 Additions)
+
+`COMPETITION_NOT_FOUND`, `COMPETITION_NOT_INITIALIZED`, `INVALID_COMPETITION_STATE`, `LOBBY_CLOSED`, `ROSTER_VERSION_CONFLICT`, `ROSTER_NOT_READY`, `ROSTER_EMPTY`, `ROUND1_RANK_INVALID`, `ROUND1_RANK_DUPLICATE`, `ROUND1_RANK_UNCONFIRMED`, `ROUND1_MAPPING_STALE`, `TEAM_NOT_ELIGIBLE`, `TEAM_EXCLUDED`, `COMPETITION_ALREADY_STARTED`, `COMPETITION_NOT_LIVE`, `COMPETITION_DEADLINE_REACHED`, `CONFIGURATION_LOCKED`.

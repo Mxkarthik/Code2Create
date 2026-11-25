@@ -1,0 +1,4 @@
+name: New Environment
+values:
+  - key: c2c.sid
+    value: ''

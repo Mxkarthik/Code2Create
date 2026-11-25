@@ -37,14 +37,17 @@ This document records the finalized architectural, competition, access-control, 
 
 ---
 
-## 3. Team Formation Requirements (Pending Phase 03)
+## 3. Team Formation Requirements (Implemented in Phase 03)
 
-- Self-service team creation with secure randomly generated invitation codes.
-- Configurable team size (initially **2 participants**), capped at **50 teams**.
-- Each team member independently confirms readiness; membership and readiness persist in MongoDB.
-- Disconnecting does not automatically reset readiness.
-- Administrators lock the roster before starting the competition; membership changes are prohibited after roster lock.
-- Admin privileges must never be overwritten by team roles.
+- Self-service team creation (`TEAM_LEADER`) with 8-character cryptographically random invitation codes from an unambiguous uppercase alphabet (`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, excluding `O`, `0`, `I`, `1`).
+- Configurable team size (initially **2 participants**), capped at **50 active teams** (`maxTeams=50`), enforced transactionally.
+- Normalized lowercase/whitespace join-code matching; regeneration immediately invalidates prior codes; codes are hidden from non-leader/non-admin participants and never logged.
+- Each team member independently confirms readiness (`PATCH /api/teams/me/ready`); a leader cannot mark a teammate ready.
+- Team status transitions: `FORMING` (< `teamSize`) → `FORMED` (full, not all ready) → `READY` (full and all ready). Membership composition changes reset readiness for remaining members.
+- Readiness and membership persist in MongoDB across reloads, disconnects, and server restarts; readiness does not claim online presence.
+- All team formation mutations are permitted only while `Competition.status === 'LOBBY'` and participate in an atomic `Competition` write guard ready for Phase 04 roster locking.
+- Global `PARTICIPANT` / `ADMIN` account roles remain strictly independent of `TEAM_LEADER` / `TEAM_MEMBER` team roles.
+- Administrative lobby APIs (`GET /api/admin/lobby`, `GET /api/admin/teams`) require `ADMIN` privileges and expose sanitized lobby/team/member readiness state without session IDs or OAuth credentials.
 
 ---
 
@@ -68,15 +71,15 @@ This document records the finalized architectural, competition, access-control, 
 
 ---
 
-## 5. Competition Rules & Settlement Requirements (Pending Phases 04–06)
+## 5. Competition Lifecycle, Timer & Settlement Rules (Phase 04 Implemented; Problem/Execution Pending Phase 05)
 
-- **Duration**: 30-minute active competition.
-- **Problem Pool**: 18 planned problems — 6 Easy (**10** distance units), 6 Medium (**25** distance units), 6 Hard (**45** distance units).
-- **Team Limits**: 6 challenge opportunities/team; 1 active challenge/team; 1 pending execution/team; 4 sample runs/challenge (16/team); 3 final attempts/challenge (18/team).
-- **Head Start**: Round 1 head start between **0 and 20**; Round 1 qualification mapping finalized prior to roster admission.
-- **Languages**: C, C++, Python, Java.
-- **Execution & Scoring**: Persistent MongoDB execution queue; idempotent submission admission; transactional score settlement; infrastructure failures never penalize participants.
-- **Advancement**: Top **10** teams advance to Round 3.
+- **Duration & Timer (Implemented in Phase 04)**: 30-minute active coding (`durationSeconds = 1800`, configurable in `LOBBY`, short durations supported for isolated tests) plus ~5 minutes outside the coding timer for briefing/settlement. Authoritative `startedAt` and `endsAt` persist in MongoDB; `remainingSeconds` is derived from `endsAt - serverTime` (never decremented in DB, never extended by refresh/restart).
+- **Lifecycle (Implemented in Phase 04)**: `LOBBY -> LOCKED -> LIVE -> SETTLING -> COMPLETED`. Round 1 rank import uses complete replacement semantics with explicit admin confirmation; membership changes invalidate affected rank mappings; exclusions preserve team memberships while blocking gameplay admission; roster locking freezes eligible teams and initializes `TeamRoundState` once; expired `LIVE` competitions reconcile atomically into `SETTLING`.
+- **Problem Pool (Pending Phase 05)**: 18 planned problems — 6 Easy (**10** distance units), 6 Medium (**25** distance units), 6 Hard (**45** distance units).
+- **Team Limits (Counters Initialized in Phase 04; Enforcement Pending Phase 05)**: 6 challenge opportunities/team (`maxChallengeOpportunities=6`); 1 active challenge/team; 1 pending execution/team; 4 sample runs/challenge (16/team); 3 final attempts/challenge (18/team).
+- **Head Start (Implemented in Phase 04)**: Round 1 head start (`maxHeadStart=20`) computed from `round1Rank` and `round1RankedTeamCount` and frozen at roster lock.
+- **Languages & Execution (Pending Phase 05)**: C, C++, Python, Java; persistent MongoDB execution queue; idempotent submission admission (atomic deadline check inside admission tx); transactional score settlement; infrastructure failures never penalize participants.
+- **Advancement (Pending Phase 05/06)**: Top **10** teams (`qualificationLimit=10`) advance to Round 3; finalization occurs only after queue settlement.
 
 ---
 

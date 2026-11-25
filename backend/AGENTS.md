@@ -14,7 +14,9 @@ This file defines mandatory constraints for all coding agents working on the **C
   - `src/middleware/`: Cross-cutting HTTP middleware (`requestId.js`, `notFound.js`, `errorHandler.js`, `authenticate.js`, `authorize.js`, `csrf.js`, `rateLimiter.js`).
   - `src/modules/users`: User schema & atomic Google identity upsert (`user.model.js`, `user.service.js`).
   - `src/modules/auth`: Google OAuth routes, controller, state store, and portal validation (`auth.routes.js`, `auth.controller.js`, `auth.service.js`, `auth.validation.js`).
-  - `src/modules/teams`, `competition`, `problems`, `submissions`, `drafts`: Pending future phases — do not prematurely implement.
+  - `src/modules/competition`: Competition lifecycle, Round 1 rank mapping/confirmation, head-start calculation, roster locking, authoritative timer & settlement transition (`competition.model.js`, `frozenRoster.model.js`, `teamRoundState.model.js`, `headStart.js`, `competition.service.js`, `competition.controller.js`, `adminCompetition.controller.js`, `competition.routes.js`, `competition.validation.js`).
+  - `src/modules/teams`: Self-service team formation, invitation codes, membership, readiness & admin lobby read APIs.
+  - `src/modules/problems`, `submissions`, `drafts`: Pending future phases — do not prematurely implement.
   - `src/integrations/`, `src/workers/`, `src/sockets/`: Reserved for Judge0 client, persistent execution queue workers, and Socket.IO in their respective phases.
 
 ---
@@ -46,13 +48,23 @@ This file defines mandatory constraints for all coding agents working on the **C
 
 ---
 
-## 3. Team Formation Rules (Pending Phase 03)
+## 3. Team Formation & Transaction Rules (Implemented in Phase 03)
 
-- Self-service team creation (`TEAM_LEADER`) with secure random invitation codes; joining assigns `TEAM_MEMBER`.
-- Configurable team size (initially 2 participants), capped at 50 teams.
-- Independent member readiness persisted in MongoDB; disconnecting does not reset readiness.
-- Roster lock by administrators before competition start; membership changes prohibited after lock.
-- Future authorization middleware contracts: `requireTeamMembership` and `requireRoundEligibility` (no temporary bypasses permitted).
+- **Self-Service Teams**: Up to 50 active teams (`maxTeams=50`), configurable `teamSize=2`. Creator becomes `TEAM_LEADER`; invitee becomes `TEAM_MEMBER`.
+- **Global vs. Team Role Independence**: Never store `teamRole` inside `User`; never overwrite `User.role` (`PARTICIPANT` / `ADMIN`) during team operations. Unassigned users have `teamId=null` and `teamRole=null`.
+- **Invitation Codes**: 8-character cryptographically random codes (`crypto.randomInt`) from unambiguous uppercase alphabet (`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, excluding `O`, `0`, `I`, `1`). Normalize input uppercase; invalidate on regeneration or dissolution; **never log invitation codes**.
+- **Readiness Invariants**: `PATCH /api/teams/me/ready` updates only the authenticated caller's own readiness in MongoDB. Team status transitions `FORMING` (< `teamSize`) -> `FORMED` (full, not all ready) -> `READY` (full and all ready). Any membership composition change resets readiness for remaining members. Readiness is independent of online presence.
+- **Transactional Concurrency & Roster Guard**:
+  - All multi-document team/membership mutations must execute inside MongoDB transactions (`runInTransaction`), sequentially (`await`, **never `Promise.all` inside a single transaction**), and participate in `acquireLobbyMutationGuard` (atomic write lock + `rosterVersion` increment on `Competition` where `status === 'LOBBY'`).
+  - Rely on MongoDB unique/partial indexes (`{ competitionId, userId }`, `{ teamId, teamRole }` for `TEAM_LEADER`, `{ competitionId, normalizedName }`, `{ competitionId, joinCode }`) — never process-local JS locks.
+  - Log committed domain events only **after** transaction commit.
+- **Future Phase 04/05 Integration**:
+  - Competition lifecycle (`LOBBY -> LOCKED -> LIVE -> SETTLING -> COMPLETED`) is strictly controlled through centralized services; backwards transitions and duplicate starts are prohibited.
+  - Round 1 rank mappings are replacement-based, require explicit admin confirmation, and invalidate when affected team membership changes.
+  - `FrozenRosterEntry` and `TeamRoundState` are created atomically once at roster lock; never reset `TeamRoundState` on startup or auth recovery.
+  - Authoritative timer relies exclusively on persisted `startedAt` and `endsAt` (synchronized server clocks required in production); `requireLiveCompetitionAdmission` rejects requests at or after `endsAt` with `COMPETITION_DEADLINE_REACHED`.
+  - Phase 05 submission queues must re-verify deadline and pending execution slot **atomically inside the submission admission transaction** (a preliminary middleware check alone is insufficient).
+  - Never prematurely finalize `SETTLING -> COMPLETED` until Phase 05/06 persistent execution queue and score settlement are implemented.
 
 ---
 

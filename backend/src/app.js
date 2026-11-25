@@ -21,6 +21,13 @@ import { requestIdMiddleware } from './middleware/requestId.js';
 import { createAuthController } from './modules/auth/auth.controller.js';
 import { createAuthRouter } from './modules/auth/auth.routes.js';
 import { createOAuthStateStore } from './modules/auth/auth.service.js';
+import { createAdminCompetitionController } from './modules/competition/adminCompetition.controller.js';
+import { createCompetitionController } from './modules/competition/competition.controller.js';
+import { createCompetitionRouter } from './modules/competition/competition.routes.js';
+import { createAdminLobbyController } from './modules/teams/adminLobby.controller.js';
+import { createAdminLobbyRouter } from './modules/teams/adminLobby.routes.js';
+import { createTeamController } from './modules/teams/team.controller.js';
+import { createTeamRouter } from './modules/teams/team.routes.js';
 import { defaultUserService } from './modules/users/user.service.js';
 import { AppError } from './utils/AppError.js';
 import { LOG_FORMATS, createHttpLogger, createLogger } from './utils/logger.js';
@@ -66,6 +73,7 @@ export function createApp({
   oauthStateStore,
   authenticator,
   rateLimitOptions,
+  competitionSlug,
   nowFn = () => Date.now(),
   mountExtraRoutes
 } = {}) {
@@ -178,6 +186,30 @@ export function createApp({
       authenticator: effectiveAuthenticator,
       userService,
       logger: appLogger,
+      competitionSlug,
+      nowFn
+    });
+
+    const teamController = createTeamController({
+      logger: appLogger,
+      competitionSlug
+    });
+
+    const adminLobbyController = createAdminLobbyController({
+      competitionSlug,
+      logger: appLogger,
+      nowFn
+    });
+
+    const adminCompetitionController = createAdminCompetitionController({
+      competitionSlug,
+      logger: appLogger,
+      nowFn
+    });
+
+    const competitionController = createCompetitionController({
+      competitionSlug,
+      logger: appLogger,
       nowFn
     });
 
@@ -189,6 +221,37 @@ export function createApp({
         authMiddleware,
         csrfProtection,
         rateLimiters
+      })
+    );
+
+    app.use('/api/teams', sessionMiddleware);
+    app.use(
+      '/api/teams',
+      createTeamRouter({
+        teamController,
+        authMiddleware,
+        csrfProtection,
+        rateLimiters
+      })
+    );
+
+    app.use('/api/competition', sessionMiddleware);
+    app.use(
+      '/api/competition',
+      createCompetitionRouter({
+        competitionController,
+        authMiddleware
+      })
+    );
+
+    app.use('/api/admin', sessionMiddleware);
+    app.use(
+      '/api/admin',
+      createAdminLobbyRouter({
+        adminLobbyController,
+        adminCompetitionController,
+        authMiddleware,
+        csrfProtection
       })
     );
 

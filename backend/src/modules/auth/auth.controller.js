@@ -6,6 +6,7 @@ import {
 import { issueCsrfToken } from '../../middleware/csrf.js';
 import { AppError } from '../../utils/AppError.js';
 import { defaultUserService } from '../users/user.service.js';
+import { getUserTeamSummary } from '../teams/team.service.js';
 import {
   PORTAL_DESTINATIONS,
   resolvePortalFailureRedirectUrl,
@@ -64,6 +65,7 @@ export function createAuthController({
   authenticator,
   userService = defaultUserService,
   logger,
+  competitionSlug,
   nowFn = () => Date.now()
 }) {
   function initiateGoogleOAuth(req, res, next) {
@@ -168,13 +170,24 @@ export function createAuthController({
     })(req, res, next);
   }
 
-  function getCurrentUser(req, res) {
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({
-      success: true,
-      user: userService.toPublicUser(req.user),
-      requestId: req.id
-    });
+  async function getCurrentUser(req, res, next) {
+    try {
+      const teamSummary = await getUserTeamSummary(req.user?._id, { competitionSlug });
+      const publicUser = userService.toPublicUser(req.user);
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json({
+        success: true,
+        user: {
+          ...publicUser,
+          teamId: teamSummary.teamId,
+          teamRole: teamSummary.teamRole
+        },
+        requestId: req.id
+      });
+    } catch (err) {
+      next(err);
+    }
   }
 
   function getSessionStatus(req, res) {

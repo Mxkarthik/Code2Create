@@ -33,6 +33,8 @@ backend/
       errorHandler.js   # Centralized JSON, infra-503 & production-sanitized error handler
     modules/
       auth/             # Google OAuth flow, atomic state store, session/CSRF/logout routes
+      competition/      # Lifecycle (LOBBY->LOCKED->LIVE->SETTLING), rank import, head starts & timer
+      teams/            # Team & TeamMembership models, readiness, join codes & admin lobby
       users/            # User Mongoose schema & atomic upsert service
     integrations/       # Reserved for Phase 05 Judge0 client
     workers/            # Reserved for Phase 05 execution queue workers

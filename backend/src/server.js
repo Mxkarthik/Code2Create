@@ -8,9 +8,20 @@ import {
 } from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { createDefaultMongoStore } from './config/session.js';
+import { Competition } from './modules/competition/competition.model.js';
+import {
+  ensureDefaultCompetition,
+  reconcileCompetitionDeadline
+} from './modules/competition/competition.service.js';
+import { FrozenRosterEntry } from './modules/competition/frozenRoster.model.js';
+import { TeamRoundState } from './modules/competition/teamRoundState.model.js';
+import { Team } from './modules/teams/team.model.js';
+import { TeamMembership } from './modules/teams/teamMembership.model.js';
+import { User } from './modules/users/user.model.js';
 import { createLogger } from './utils/logger.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10000;
+const LIFECYCLE_RECONCILE_INTERVAL_MS = 15000;
 
 async function startServer() {
   const env = loadEnv();
@@ -50,6 +61,25 @@ async function startServer() {
   }
 
   const sessionStore = createDefaultMongoStore(env);
+
+  await User.syncIndexes();
+  await Competition.syncIndexes();
+  await Team.syncIndexes();
+  await TeamMembership.syncIndexes();
+  await FrozenRosterEntry.syncIndexes();
+  await TeamRoundState.syncIndexes();
+  await ensureDefaultCompetition();
+  await reconcileCompetitionDeadline({ logger });
+
+  const lifecycleReconcileTimer = setInterval(() => {
+    void reconcileCompetitionDeadline({ logger }).catch((err) => {
+      logger.warn(
+        { errorName: err?.name, errorMessage: err?.message },
+        'Competition deadline reconciliation check failed'
+      );
+    });
+  }, LIFECYCLE_RECONCILE_INTERVAL_MS);
+  lifecycleReconcileTimer.unref();
 
   const app = createApp({
     env,
@@ -98,6 +128,8 @@ async function startServer() {
     forceTimer.unref();
 
     try {
+      clearInterval(lifecycleReconcileTimer);
+
       await new Promise((resolve, reject) => {
         server.close((err) => {
           if (err) {
