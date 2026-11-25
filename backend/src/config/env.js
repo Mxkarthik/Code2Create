@@ -15,6 +15,42 @@ const NODE_ENVS = ['development', 'test', 'production'];
 export const DEFAULT_SESSION_MAX_AGE_MS = 28800000; // 8 hours
 export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 7200000; // 2 hours
 export const DEFAULT_OAUTH_STATE_TTL_MS = 600000; // 10 minutes
+export const DEFAULT_JUDGE0_URL = 'http://127.0.0.1:2358';
+export const DEFAULT_JUDGE0_MAX_IN_FLIGHT = 8;
+export const DEFAULT_JUDGE0_REQUEST_TIMEOUT_MS = 10000;
+export const DEFAULT_JUDGE0_POLL_INTERVAL_MS = 750;
+export const DEFAULT_JUDGE0_POLL_TIMEOUT_MS = 60000;
+export const DEFAULT_EXECUTION_WORKER_POLL_INTERVAL_MS = 250;
+export const DEFAULT_EXECUTION_LEASE_DURATION_MS = 30000;
+export const DEFAULT_EXECUTION_LEASE_RENEW_INTERVAL_MS = 10000;
+export const DEFAULT_EXECUTION_MAX_QUEUED_SUBMISSIONS = 100;
+export const DEFAULT_EXECUTION_RETRY_MAX_ATTEMPTS = 3;
+export const DEFAULT_EXECUTION_SHUTDOWN_TIMEOUT_MS = 8000;
+export const DEFAULT_EXECUTION_UNCERTAIN_RECONCILE_MS = 90000;
+
+const BLOCKED_PUBLIC_JUDGE0_HOSTS = new Set([
+  'ce.judge0.com',
+  'api.judge0.com',
+  'judge0-ce.p.rapidapi.com'
+]);
+
+function isSafeJudge0Url(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    if (parsed.username || parsed.password) {
+      return false;
+    }
+    if (BLOCKED_PUBLIC_JUDGE0_HOSTS.has(parsed.hostname.toLowerCase())) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function normalizeOptionalString(value) {
   if (typeof value !== 'string') {
@@ -93,7 +129,76 @@ const envSchema = z
       .number()
       .int()
       .positive('OAUTH_STATE_TTL_MS must be a positive integer')
-      .default(DEFAULT_OAUTH_STATE_TTL_MS)
+      .default(DEFAULT_OAUTH_STATE_TTL_MS),
+    JUDGE0_URL: z.string().trim().optional(),
+    JUDGE0_AUTH_TOKEN: z.string().trim().optional(),
+    JUDGE0_MAX_IN_FLIGHT: z.coerce
+      .number()
+      .int()
+      .min(1, 'JUDGE0_MAX_IN_FLIGHT must be between 1 and 64')
+      .max(64, 'JUDGE0_MAX_IN_FLIGHT must be between 1 and 64')
+      .default(DEFAULT_JUDGE0_MAX_IN_FLIGHT),
+    JUDGE0_REQUEST_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1000, 'JUDGE0_REQUEST_TIMEOUT_MS must be between 1000 and 60000 ms')
+      .max(60000, 'JUDGE0_REQUEST_TIMEOUT_MS must be between 1000 and 60000 ms')
+      .default(DEFAULT_JUDGE0_REQUEST_TIMEOUT_MS),
+    JUDGE0_POLL_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(100, 'JUDGE0_POLL_INTERVAL_MS must be between 100 and 10000 ms')
+      .max(10000, 'JUDGE0_POLL_INTERVAL_MS must be between 100 and 10000 ms')
+      .default(DEFAULT_JUDGE0_POLL_INTERVAL_MS),
+    JUDGE0_POLL_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1000, 'JUDGE0_POLL_TIMEOUT_MS must be between 1000 and 300000 ms')
+      .max(300000, 'JUDGE0_POLL_TIMEOUT_MS must be between 1000 and 300000 ms')
+      .default(DEFAULT_JUDGE0_POLL_TIMEOUT_MS),
+    EXECUTION_WORKER_ENABLED: z.enum(['true', 'false']).optional(),
+    EXECUTION_WORKER_POLL_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(50, 'EXECUTION_WORKER_POLL_INTERVAL_MS must be between 50 and 10000 ms')
+      .max(10000, 'EXECUTION_WORKER_POLL_INTERVAL_MS must be between 50 and 10000 ms')
+      .default(DEFAULT_EXECUTION_WORKER_POLL_INTERVAL_MS),
+    EXECUTION_LEASE_DURATION_MS: z.coerce
+      .number()
+      .int()
+      .min(1000, 'EXECUTION_LEASE_DURATION_MS must be between 1000 and 120000 ms')
+      .max(120000, 'EXECUTION_LEASE_DURATION_MS must be between 1000 and 120000 ms')
+      .default(DEFAULT_EXECUTION_LEASE_DURATION_MS),
+    EXECUTION_LEASE_RENEW_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(500, 'EXECUTION_LEASE_RENEW_INTERVAL_MS must be between 500 and 60000 ms')
+      .max(60000, 'EXECUTION_LEASE_RENEW_INTERVAL_MS must be between 500 and 60000 ms')
+      .default(DEFAULT_EXECUTION_LEASE_RENEW_INTERVAL_MS),
+    EXECUTION_MAX_QUEUED_SUBMISSIONS: z.coerce
+      .number()
+      .int()
+      .min(1, 'EXECUTION_MAX_QUEUED_SUBMISSIONS must be between 1 and 1000')
+      .max(1000, 'EXECUTION_MAX_QUEUED_SUBMISSIONS must be between 1 and 1000')
+      .default(DEFAULT_EXECUTION_MAX_QUEUED_SUBMISSIONS),
+    EXECUTION_RETRY_MAX_ATTEMPTS: z.coerce
+      .number()
+      .int()
+      .min(0, 'EXECUTION_RETRY_MAX_ATTEMPTS must be between 0 and 10')
+      .max(10, 'EXECUTION_RETRY_MAX_ATTEMPTS must be between 0 and 10')
+      .default(DEFAULT_EXECUTION_RETRY_MAX_ATTEMPTS),
+    EXECUTION_SHUTDOWN_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500, 'EXECUTION_SHUTDOWN_TIMEOUT_MS must be between 500 and 60000 ms')
+      .max(60000, 'EXECUTION_SHUTDOWN_TIMEOUT_MS must be between 500 and 60000 ms')
+      .default(DEFAULT_EXECUTION_SHUTDOWN_TIMEOUT_MS),
+    EXECUTION_UNCERTAIN_RECONCILE_MS: z.coerce
+      .number()
+      .int()
+      .min(100, 'EXECUTION_UNCERTAIN_RECONCILE_MS must be between 100 and 300000 ms')
+      .max(300000, 'EXECUTION_UNCERTAIN_RECONCILE_MS must be between 100 and 300000 ms')
+      .default(DEFAULT_EXECUTION_UNCERTAIN_RECONCILE_MS)
   })
   .superRefine((data, ctx) => {
     const isProd = data.NODE_ENV === 'production';
@@ -176,6 +281,31 @@ const envSchema = z
         message: 'SESSION_IDLE_TIMEOUT_MS cannot exceed SESSION_MAX_AGE_MS'
       });
     }
+
+    if (data.JUDGE0_URL && !isSafeJudge0Url(data.JUDGE0_URL)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JUDGE0_URL'],
+        message:
+          'JUDGE0_URL must be a valid private/self-hosted http(s) URL without embedded credentials or public hosted Judge0 domains'
+      });
+    }
+
+    if (data.JUDGE0_POLL_INTERVAL_MS > data.JUDGE0_POLL_TIMEOUT_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JUDGE0_POLL_INTERVAL_MS'],
+        message: 'JUDGE0_POLL_INTERVAL_MS cannot exceed JUDGE0_POLL_TIMEOUT_MS'
+      });
+    }
+
+    if (data.EXECUTION_LEASE_RENEW_INTERVAL_MS >= data.EXECUTION_LEASE_DURATION_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['EXECUTION_LEASE_RENEW_INTERVAL_MS'],
+        message: 'EXECUTION_LEASE_RENEW_INTERVAL_MS must be less than EXECUTION_LEASE_DURATION_MS'
+      });
+    }
   });
 
 /**
@@ -204,7 +334,29 @@ export function validateEnv(rawEnv = process.env) {
     SESSION_SECRET: normalizeOptionalString(rawEnv.SESSION_SECRET),
     SESSION_MAX_AGE_MS: normalizeOptionalString(rawEnv.SESSION_MAX_AGE_MS),
     SESSION_IDLE_TIMEOUT_MS: normalizeOptionalString(rawEnv.SESSION_IDLE_TIMEOUT_MS),
-    OAUTH_STATE_TTL_MS: normalizeOptionalString(rawEnv.OAUTH_STATE_TTL_MS)
+    OAUTH_STATE_TTL_MS: normalizeOptionalString(rawEnv.OAUTH_STATE_TTL_MS),
+    JUDGE0_URL: normalizeOptionalString(rawEnv.JUDGE0_URL),
+    JUDGE0_AUTH_TOKEN: normalizeOptionalString(rawEnv.JUDGE0_AUTH_TOKEN),
+    JUDGE0_MAX_IN_FLIGHT: normalizeOptionalString(rawEnv.JUDGE0_MAX_IN_FLIGHT),
+    JUDGE0_REQUEST_TIMEOUT_MS: normalizeOptionalString(rawEnv.JUDGE0_REQUEST_TIMEOUT_MS),
+    JUDGE0_POLL_INTERVAL_MS: normalizeOptionalString(rawEnv.JUDGE0_POLL_INTERVAL_MS),
+    JUDGE0_POLL_TIMEOUT_MS: normalizeOptionalString(rawEnv.JUDGE0_POLL_TIMEOUT_MS),
+    EXECUTION_WORKER_ENABLED: normalizeOptionalString(rawEnv.EXECUTION_WORKER_ENABLED),
+    EXECUTION_WORKER_POLL_INTERVAL_MS: normalizeOptionalString(
+      rawEnv.EXECUTION_WORKER_POLL_INTERVAL_MS
+    ),
+    EXECUTION_LEASE_DURATION_MS: normalizeOptionalString(rawEnv.EXECUTION_LEASE_DURATION_MS),
+    EXECUTION_LEASE_RENEW_INTERVAL_MS: normalizeOptionalString(
+      rawEnv.EXECUTION_LEASE_RENEW_INTERVAL_MS
+    ),
+    EXECUTION_MAX_QUEUED_SUBMISSIONS: normalizeOptionalString(
+      rawEnv.EXECUTION_MAX_QUEUED_SUBMISSIONS
+    ),
+    EXECUTION_RETRY_MAX_ATTEMPTS: normalizeOptionalString(rawEnv.EXECUTION_RETRY_MAX_ATTEMPTS),
+    EXECUTION_SHUTDOWN_TIMEOUT_MS: normalizeOptionalString(rawEnv.EXECUTION_SHUTDOWN_TIMEOUT_MS),
+    EXECUTION_UNCERTAIN_RECONCILE_MS: normalizeOptionalString(
+      rawEnv.EXECUTION_UNCERTAIN_RECONCILE_MS
+    )
   };
 
   const result = envSchema.safeParse(candidate);
@@ -239,6 +391,11 @@ export function validateEnv(rawEnv = process.env) {
     parsed.LOG_FORMAT ?? (parsed.NODE_ENV === 'production' ? 'json' : 'minimal');
   const logLevel = parsed.LOG_LEVEL ?? (logFormat === 'debug' ? 'debug' : 'info');
 
+  const executionWorkerEnabled =
+    parsed.EXECUTION_WORKER_ENABLED !== undefined
+      ? parsed.EXECUTION_WORKER_ENABLED === 'true'
+      : parsed.NODE_ENV !== 'test';
+
   return Object.freeze({
     NODE_ENV: parsed.NODE_ENV,
     PORT: parsed.PORT,
@@ -257,7 +414,21 @@ export function validateEnv(rawEnv = process.env) {
     SESSION_SECRET: parsed.SESSION_SECRET,
     SESSION_MAX_AGE_MS: parsed.SESSION_MAX_AGE_MS,
     SESSION_IDLE_TIMEOUT_MS: parsed.SESSION_IDLE_TIMEOUT_MS,
-    OAUTH_STATE_TTL_MS: parsed.OAUTH_STATE_TTL_MS
+    OAUTH_STATE_TTL_MS: parsed.OAUTH_STATE_TTL_MS,
+    JUDGE0_URL: stripTrailingSlash(parsed.JUDGE0_URL ?? DEFAULT_JUDGE0_URL),
+    JUDGE0_AUTH_TOKEN: parsed.JUDGE0_AUTH_TOKEN,
+    JUDGE0_MAX_IN_FLIGHT: parsed.JUDGE0_MAX_IN_FLIGHT,
+    JUDGE0_REQUEST_TIMEOUT_MS: parsed.JUDGE0_REQUEST_TIMEOUT_MS,
+    JUDGE0_POLL_INTERVAL_MS: parsed.JUDGE0_POLL_INTERVAL_MS,
+    JUDGE0_POLL_TIMEOUT_MS: parsed.JUDGE0_POLL_TIMEOUT_MS,
+    EXECUTION_WORKER_ENABLED: executionWorkerEnabled,
+    EXECUTION_WORKER_POLL_INTERVAL_MS: parsed.EXECUTION_WORKER_POLL_INTERVAL_MS,
+    EXECUTION_LEASE_DURATION_MS: parsed.EXECUTION_LEASE_DURATION_MS,
+    EXECUTION_LEASE_RENEW_INTERVAL_MS: parsed.EXECUTION_LEASE_RENEW_INTERVAL_MS,
+    EXECUTION_MAX_QUEUED_SUBMISSIONS: parsed.EXECUTION_MAX_QUEUED_SUBMISSIONS,
+    EXECUTION_RETRY_MAX_ATTEMPTS: parsed.EXECUTION_RETRY_MAX_ATTEMPTS,
+    EXECUTION_SHUTDOWN_TIMEOUT_MS: parsed.EXECUTION_SHUTDOWN_TIMEOUT_MS,
+    EXECUTION_UNCERTAIN_RECONCILE_MS: parsed.EXECUTION_UNCERTAIN_RECONCILE_MS
   });
 }
 

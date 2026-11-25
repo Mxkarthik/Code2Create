@@ -24,6 +24,10 @@ import { createOAuthStateStore } from './modules/auth/auth.service.js';
 import { createAdminCompetitionController } from './modules/competition/adminCompetition.controller.js';
 import { createCompetitionController } from './modules/competition/competition.controller.js';
 import { createCompetitionRouter } from './modules/competition/competition.routes.js';
+import { createAdminProblemController } from './modules/problems/adminProblem.controller.js';
+import { createAdminProblemRouter } from './modules/problems/adminProblem.routes.js';
+import { createProblemController } from './modules/problems/problem.controller.js';
+import { createProblemRouter } from './modules/problems/problem.routes.js';
 import { createAdminLobbyController } from './modules/teams/adminLobby.controller.js';
 import { createAdminLobbyRouter } from './modules/teams/adminLobby.routes.js';
 import { createTeamController } from './modules/teams/team.controller.js';
@@ -213,6 +217,14 @@ export function createApp({
       nowFn
     });
 
+    const adminProblemController = createAdminProblemController({
+      competitionSlug,
+      logger: appLogger,
+      nowFn
+    });
+
+    const problemController = createProblemController();
+
     app.use('/api/auth', sessionMiddleware, effectiveAuthenticator.initialize());
     app.use(
       '/api/auth',
@@ -244,7 +256,27 @@ export function createApp({
       })
     );
 
+    app.use('/api/problems', sessionMiddleware);
+    app.use(
+      '/api/problems',
+      createProblemRouter({
+        problemController,
+        authMiddleware,
+        competitionSlug,
+        nowFn,
+        logger: appLogger
+      })
+    );
+
     app.use('/api/admin', sessionMiddleware);
+    app.use(
+      '/api/admin/problems',
+      createAdminProblemRouter({
+        adminProblemController,
+        authMiddleware,
+        csrfProtection
+      })
+    );
     app.use(
       '/api/admin',
       createAdminLobbyRouter({

@@ -13,7 +13,10 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "judge0:verify": "node scripts/verify-judge0.js",
+    "judge0:verify-reference": "node scripts/verify-reference.js",
+    "queue:verify": "node scripts/verify-execution-queue.js"
   },
   "dependencies": {
     "connect-mongo": "^6.0.0",

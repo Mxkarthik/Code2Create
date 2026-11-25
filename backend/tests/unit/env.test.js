@@ -134,4 +134,42 @@ describe('Environment validation (unit)', () => {
       expect(err.message).toContain('MONGODB_DNS_SERVERS');
     }
   });
+
+  it('validates Judge0 environment defaults, bounds, URL safety, and poll constraints', () => {
+    const defaults = validateEnv(validBase);
+    expect(defaults.JUDGE0_URL).toBe('http://127.0.0.1:2358');
+    expect(defaults.JUDGE0_MAX_IN_FLIGHT).toBe(8);
+    expect(defaults.JUDGE0_REQUEST_TIMEOUT_MS).toBe(10000);
+    expect(defaults.JUDGE0_POLL_INTERVAL_MS).toBe(750);
+    expect(defaults.JUDGE0_POLL_TIMEOUT_MS).toBe(60000);
+
+    expect(() =>
+      validateEnv({
+        ...validBase,
+        JUDGE0_URL: 'https://ce.judge0.com'
+      })
+    ).toThrow(/JUDGE0_URL/);
+
+    expect(() =>
+      validateEnv({
+        ...validBase,
+        JUDGE0_POLL_INTERVAL_MS: '5000',
+        JUDGE0_POLL_TIMEOUT_MS: '2000'
+      })
+    ).toThrow(/JUDGE0_POLL_INTERVAL_MS/);
+
+    expect(defaults.EXECUTION_WORKER_ENABLED).toBe(true);
+    expect(defaults.EXECUTION_MAX_QUEUED_SUBMISSIONS).toBe(100);
+    expect(defaults.EXECUTION_LEASE_DURATION_MS).toBe(30000);
+    expect(defaults.EXECUTION_SHUTDOWN_TIMEOUT_MS).toBe(8000);
+    expect(validateEnv({ ...validBase, NODE_ENV: 'test' }).EXECUTION_WORKER_ENABLED).toBe(false);
+
+    expect(() =>
+      validateEnv({
+        ...validBase,
+        EXECUTION_LEASE_DURATION_MS: '5000',
+        EXECUTION_LEASE_RENEW_INTERVAL_MS: '5000'
+      })
+    ).toThrow(/EXECUTION_LEASE_RENEW_INTERVAL_MS/);
+  });
 });

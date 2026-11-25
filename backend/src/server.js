@@ -15,9 +15,16 @@ import {
 } from './modules/competition/competition.service.js';
 import { FrozenRosterEntry } from './modules/competition/frozenRoster.model.js';
 import { TeamRoundState } from './modules/competition/teamRoundState.model.js';
+import { ExecutionCapacity } from './modules/execution/executionCapacity.model.js';
+import { ExecutionJob } from './modules/execution/executionJob.model.js';
+import { Problem } from './modules/problems/problem.model.js';
+import { TestCase } from './modules/problems/testCase.model.js';
+import { Submission } from './modules/submissions/submission.model.js';
 import { Team } from './modules/teams/team.model.js';
 import { TeamMembership } from './modules/teams/teamMembership.model.js';
 import { User } from './modules/users/user.model.js';
+import { createJudge0Service } from './integrations/judge0/judge0.service.js';
+import { createExecutionWorker } from './workers/execution.worker.js';
 import { createLogger } from './utils/logger.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10000;
@@ -68,6 +75,11 @@ async function startServer() {
   await TeamMembership.syncIndexes();
   await FrozenRosterEntry.syncIndexes();
   await TeamRoundState.syncIndexes();
+  await Problem.syncIndexes();
+  await TestCase.syncIndexes();
+  await Submission.syncIndexes();
+  await ExecutionJob.syncIndexes();
+  await ExecutionCapacity.syncIndexes();
   await ensureDefaultCompetition();
   await reconcileCompetitionDeadline({ logger });
 
@@ -111,6 +123,27 @@ async function startServer() {
     checks: startupChecks
   });
 
+  let executionWorker = null;
+  if (env.EXECUTION_WORKER_ENABLED && env.JUDGE0_AUTH_TOKEN) {
+    const judge0Service = createJudge0Service({ config: env });
+    executionWorker = createExecutionWorker({
+      judge0Service,
+      databaseAdapter: defaultDatabaseAdapter,
+      maxInFlight: env.JUDGE0_MAX_IN_FLIGHT,
+      pollIntervalMs: env.EXECUTION_WORKER_POLL_INTERVAL_MS,
+      judge0PollIntervalMs: env.JUDGE0_POLL_INTERVAL_MS,
+      judge0PollTimeoutMs: env.JUDGE0_POLL_TIMEOUT_MS,
+      leaseDurationMs: env.EXECUTION_LEASE_DURATION_MS,
+      retryMaxAttempts: env.EXECUTION_RETRY_MAX_ATTEMPTS,
+      uncertainReconcileMs: env.EXECUTION_UNCERTAIN_RECONCILE_MS,
+      shutdownTimeoutMs: env.EXECUTION_SHUTDOWN_TIMEOUT_MS,
+      logger
+    });
+    await executionWorker.start();
+  } else if (env.EXECUTION_WORKER_ENABLED && !env.JUDGE0_AUTH_TOKEN) {
+    logger.warn('Execution worker skipped: JUDGE0_AUTH_TOKEN is not configured');
+  }
+
   let isShuttingDown = false;
 
   async function shutdown(signal) {
@@ -129,6 +162,10 @@ async function startServer() {
 
     try {
       clearInterval(lifecycleReconcileTimer);
+
+      if (executionWorker) {
+        await executionWorker.stop({ timeoutMs: env.EXECUTION_SHUTDOWN_TIMEOUT_MS });
+      }
 
       await new Promise((resolve, reject) => {
         server.close((err) => {

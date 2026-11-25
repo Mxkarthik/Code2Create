@@ -34,11 +34,16 @@ backend/
     modules/
       auth/             # Google OAuth flow, atomic state store, session/CSRF/logout routes
       competition/      # Lifecycle (LOBBY->LOCKED->LIVE->SETTLING), rank import, head starts & timer
+      execution/        # Multi-case evaluation, durable ExecutionJob queue, scheduler, capacity & recovery
+      problems/         # Problem/TestCase bank, Judge0 language IDs, output comparison & readiness
+      submissions/      # Persistent Submission model, idempotency, serializers & admission/settlement contracts
       teams/            # Team & TeamMembership models, readiness, join codes & admin lobby
       users/            # User Mongoose schema & atomic upsert service
-    integrations/       # Reserved for Phase 05 Judge0 client
-    workers/            # Reserved for Phase 05 execution queue workers
-    sockets/            # Reserved for Phase 06 Socket.IO real-time layer
+    integrations/
+      judge0/           # Judge0 CE HTTP client, config, errors, Base64/status mapper & service
+    workers/            # Durable execution queue worker (execution.worker.js)
+    sockets/            # Reserved for Socket.IO real-time layer
+    scripts/            # Diagnostic scripts (verify-judge0.js, verify-reference.js, verify-execution-queue.js)
     utils/
       AppError.js       # Operational HTTP error class
       logger.js         # Redacted Pino logger & URI sanitizer
@@ -85,7 +90,34 @@ backend/
      - `SESSION_IDLE_TIMEOUT_MS` (default `7200000` — 2 hours)
      - `OAUTH_STATE_TTL_MS` (default `600000` — 10 minutes)
 
+    - **Judge0 Execution (Phase 06)**:
+      - `JUDGE0_URL` (default `http://127.0.0.1:2358` via local IAP tunnel; production requires direct private backend-to-Judge0 networking)
+      - `JUDGE0_AUTH_TOKEN` (required for authenticated Judge0 requests)
+      - `JUDGE0_MAX_IN_FLIGHT` (default `8`, bounded `1..64` — concurrent Judge0 jobs, not complete multi-case submissions)
+      - `JUDGE0_REQUEST_TIMEOUT_MS` (default `10000`, `1000..60000`)
+      - `JUDGE0_POLL_INTERVAL_MS` (default `750`, `100..10000`)
+      - `JUDGE0_POLL_TIMEOUT_MS` (default `60000`, `1000..300000`)
+    - **Execution Queue Worker (Phase 07)**:
+      - `EXECUTION_WORKER_ENABLED` (default `true` in dev/prod, `false` in `test`; never auto-started by Supertest `app.js`)
+      - `EXECUTION_WORKER_POLL_INTERVAL_MS` (default `250`, `50..10000`)
+      - `EXECUTION_LEASE_DURATION_MS` (default `30000`, `1000..120000`)
+      - `EXECUTION_LEASE_RENEW_INTERVAL_MS` (default `10000`, `500..60000`, must be `< EXECUTION_LEASE_DURATION_MS`)
+      - `EXECUTION_MAX_QUEUED_SUBMISSIONS` (default `100`, `1..1000`)
+      - `EXECUTION_RETRY_MAX_ATTEMPTS` (default `3`, `0..10`)
+      - `EXECUTION_SHUTDOWN_TIMEOUT_MS` (default `8000`, `500..60000`)
+      - `EXECUTION_UNCERTAIN_RECONCILE_MS` (default `90000`, `100..300000`)
+
    > **Note**: `ADMIN_EMAILS` and JWT variables are not used by authentication.
+
+## Local Judge0 IAP Tunnel (Development Only)
+
+In local development, connect to the GCP Judge0 VM (`code-rush-515802` / `judge0server` in `asia-south1-a`) over IAP before running `judge0:verify`:
+
+```bash
+gcloud compute start-iap-tunnel judge0server 2358 --project=code-rush-515802 --zone=asia-south1-a --local-host-port=127.0.0.1:2358
+```
+
+Production deployments must **not** rely on a developer laptop SSH tunnel; deploy the backend with direct private connectivity to the Judge0 instance.
 
 ## Manual Administrator Management
 
@@ -122,6 +154,15 @@ npm run test:unit
 
 # Run isolated MongoDB integration tests only (requires MONGODB_TEST_URI)
 npm run test:integration
+
+# Run live Judge0 diagnostic suite (requires IAP tunnel / self-hosted Judge0)
+npm run judge0:verify
+
+# Run disposable reference-solution verification fixture against Judge0
+npm run judge0:verify-reference -- --fixture
+
+# Run live persistent queue + Judge0 smoke test against code2create_test
+npm run queue:verify
 ```
 
 ## Backend-Only Google OAuth Browser Verification

@@ -14,10 +14,15 @@ This file defines mandatory constraints for all coding agents working on the **C
   - `src/middleware/`: Cross-cutting HTTP middleware (`requestId.js`, `notFound.js`, `errorHandler.js`, `authenticate.js`, `authorize.js`, `csrf.js`, `rateLimiter.js`).
   - `src/modules/users`: User schema & atomic Google identity upsert (`user.model.js`, `user.service.js`).
   - `src/modules/auth`: Google OAuth routes, controller, state store, and portal validation (`auth.routes.js`, `auth.controller.js`, `auth.service.js`, `auth.validation.js`).
-  - `src/modules/competition`: Competition lifecycle, Round 1 rank mapping/confirmation, head-start calculation, roster locking, authoritative timer & settlement transition (`competition.model.js`, `frozenRoster.model.js`, `teamRoundState.model.js`, `headStart.js`, `competition.service.js`, `competition.controller.js`, `adminCompetition.controller.js`, `competition.routes.js`, `competition.validation.js`).
+  - `src/modules/competition`: Competition lifecycle, Round 1 rank mapping/confirmation, head-start calculation, roster locking, authoritative timer & settlement transition.
   - `src/modules/teams`: Self-service team formation, invitation codes, membership, readiness & admin lobby read APIs.
-  - `src/modules/problems`, `submissions`, `drafts`: Pending future phases — do not prematurely implement.
-  - `src/integrations/`, `src/workers/`, `src/sockets/`: Reserved for Judge0 client, persistent execution queue workers, and Socket.IO in their respective phases.
+  - `src/modules/problems`: Problem & TestCase schemas, language/execution-limit config, output comparison, publication validation & participant-safe listing (`language.config.js`, `outputComparison.js`, `problem.model.js`, `testCase.model.js`, `problem.service.js`).
+  - `src/modules/execution`: Multi-test-case evaluation (`RUN`, `SUBMIT`, `REFERENCE_VERIFICATION`), durable `ExecutionJob` queue, fair scheduling, capacity coordination, crash recovery, and reference verification (`testCaseEvaluator.js`, `execution.service.js`, `executionJob.model.js`, `executionCapacity.model.js`, `executionQueue.service.js`, `executionScheduler.js`, `executionRecovery.service.js`, `referenceVerification.service.js`).
+  - `src/modules/submissions`: Durable `Submission` schema, strict validation, SHA-256 request fingerprinting/idempotency, participant-safe/admin-safe serializers, atomic admission & Phase 08 settlement contracts (`submission.constants.js`, `submission.model.js`, `submission.validation.js`, `submission.serializer.js`, `submission.repository.js`, `submission.service.js`).
+  - `src/modules/challenges`, `drafts`: Pending future phases — do not prematurely implement.
+  - `src/integrations/judge0/`: Self-hosted Judge0 CE HTTP client, config validation, typed errors, Base64/status mapper & execution service (`judge0.client.js`, `judge0.config.js`, `judge0.errors.js`, `judge0.mapper.js`, `judge0.service.js`).
+  - `src/workers/`: Persistent Judge0 queue worker integrated with graceful server shutdown (`execution.worker.js`).
+  - `src/sockets/`: Reserved for Socket.IO in its respective phase.
 
 ---
 
@@ -65,6 +70,25 @@ This file defines mandatory constraints for all coding agents working on the **C
   - Authoritative timer relies exclusively on persisted `startedAt` and `endsAt` (synchronized server clocks required in production); `requireLiveCompetitionAdmission` rejects requests at or after `endsAt` with `COMPETITION_DEADLINE_REACHED`.
   - Phase 05 submission queues must re-verify deadline and pending execution slot **atomically inside the submission admission transaction** (a preliminary middleware check alone is insufficient).
   - Never prematurely finalize `SETTLING -> COMPLETED` until Phase 05/06 persistent execution queue and score settlement are implemented.
+- **Problem Bank & Hidden Test Rules (Implemented in Phase 05)**:
+  - Never expose `HIDDEN` test cases, hidden `expectedOutput`, `DRAFT`/`ARCHIVED` problems, or reference solutions through participant APIs, error responses, logs, or future Socket.IO events.
+  - Never allow clients to supply rewards, difficulty overrides, execution limits, or Judge0 language IDs (`C:50`, `CPP:54`, `PYTHON:71`, `JAVA:62` only).
+  - Problem & test-case mutations are allowed **only** in `LOBBY` on `DRAFT` problems (`PUBLISHED` problems must be unpublished first; `ARCHIVED` is terminal).
+  - Phase 06/07 Judge0 adapter must use `getInternalExecutionProblem` internally (`RUN` = sample tests only; `SUBMIT` = all required hidden tests) and must verify Judge0 actually enforces the configured CPU/wall/memory/output limits.
+  - Full participant problem detail access (`GET /api/problems/:problemId`) remains deferred until `ChallengeAttempt` exists so participants cannot inspect full statements before consuming a challenge opportunity.
+  - Final production competition start must eventually enforce a verified, frozen, sufficiently populated (6E/6M/6H) problem bank before the real event.
+- **Judge0 Execution Integration Rules (Implemented in Phase 06)**:
+  - Never expose an arbitrary execution endpoint or `judge0Token` to participants; never automatically retry `POST /submissions` on uncertain failures (`JUDGE0_SUBMISSION_ADMISSION_UNCERTAIN`).
+  - Never classify Judge0 infrastructure errors (`UNREACHABLE`, `AUTH_FAILED`, `QUEUE_SATURATED`, `TIMEOUT`, `POLL_TIMEOUT`, status 13/14, unknown statuses) as participant `WRONG_ANSWER`.
+  - Never interpret Judge0 status `3` (`EXECUTED`) alone without `compareOutputs()`; enforce `EXECUTION_POLICY.MAX_CAPTURED_OUTPUT_BYTES` (`262144` bytes) in Node independently of Judge0 `max_file_size`.
+  - Never hold a MongoDB transaction open during external Judge0 requests; record `Problem.verification` atomically against exact `version` and invalidate on edits.
+  - Never use local IAP SSH tunnel (`127.0.0.1:2358`) as a production deployment topology; production backend must reach Judge0 privately within GCP/VPC.
+- **Persistent Queue & Worker Integrity Rules (Implemented in Phase 07)**:
+  - Never expose `Submission.sourceCode`, `ExecutionJob.judge0Token`, `testCaseInput`, `expectedOutput`, or hidden stdout/stderr in participant serializers, admin queue listings, logs, or future Socket.IO payloads.
+  - Never introduce Redis or in-memory-only queues; MongoDB (`Submission`, `ExecutionJob`, `ExecutionCapacity`, `TeamRoundState.pendingSubmissionId`) is the sole durable source of truth, with **no TTL deletion** on submissions or jobs.
+  - Never claim exactly-once external Judge0 execution; `DISPATCHING` leases that expire without a persisted token and ambiguous POST errors must transition to `ADMISSION_UNCERTAIN` (`AWAITING_RECONCILIATION`), never triggering blind duplicate `POST /submissions`.
+  - All worker mutations must verify `{ leaseOwner, fencingVersion }`; `TeamRoundState.pendingSubmissionId` may only be cleared atomically by `settleSubmissionInternal` matching that exact `submissionId`.
+  - Do not accept untrusted participant code in production until the Judge0 VM completes separate security/egress/isolation review.
 
 ---
 
